@@ -22,13 +22,19 @@ import (
  *******************************************************************************
 */
 
-
-type Edge struct {
+// Token: Found within the adjacency matrix, represents an edge for a chain
+type Token struct {
 	Tag       int          // Sequence identifier
 	Num       int          // Sequence edge number
 	Color     string       // Color to use with edge
 }
 
+// Edge: Represents an edge when use is needed outside of a matrix context
+type Edge struct {
+	Base      int          // ID of the node at which the edge begins
+	Dest      int          // ID of the node at which the edge points
+	Token     *Token       // Token identifying the edge owner
+}
 
 /*
  *******************************************************************************
@@ -38,7 +44,7 @@ type Edge struct {
 
 
 // Returns true if a given edge is equal to another
-func (e *Edge) Equals (other *Edge) bool {
+func (e *Token) Equals (other *Token) bool {
 	return (e.Tag == other.Tag) && (e.Num == other.Num)
 }
 
@@ -73,7 +79,7 @@ func Path2String (path []int) string {
 
 // Returns a string describing an edge. To be used with graph.Map
 func Show (x interface{}) string {
-	es := x.([]*Edge)
+	es := x.([]*Token)
 	if len(es) == 0 {
 		return " _ "
 	}
@@ -84,16 +90,34 @@ func Show (x interface{}) string {
 	return s + ")"
 }
 
-// Returns a slice of edges from the given index in the graph. Panics on error
-func EdgesAt (row, col int, g *graph.Graph) []*Edge {
+// Returns a slice of tokens from the given index in the graph. Panics on error
+func EdgesAt (row, col int, g *graph.Graph) []*Token {
 	val, err := g.Get(row, col)
 	if nil != err {
 		panic(err)
 	}
 	if nil == val {
-		return []*Edge{}
+		return []*Token{}
 	}
-	return val.([]*Edge)
+	return val.([]*Token)
+}
+
+// Returns the slice of all edges in the given graph. Panics on error
+func AllEdges (g *graph.Graph) []Edge {
+	if nil == g {
+		panic(errors.New("Cannot operate on empty graph"))	
+	}
+	edges := []Edge{}
+	for row := 0; row < g.Len(); row++ {
+		for col := 0; col < g.Len(); col++ {
+			tokens := EdgesAt(row, col, g)
+			for _, t := range tokens {
+				edges = append(edges, Edge{Base: row, Dest: col, Token: t})
+			}
+		}
+	}
+
+	return edges
 }
 
 // Returns all rows on which chains start, given ordered chain lengths
@@ -104,6 +128,30 @@ func StartingRows (chains []int) []int {
 		sum += chains[i]
 	}
 	return starting_rows	
+}
+
+// Returns the starting row for a given chain, and the column at which
+// the outgoing edge was found. If the returned column is -1, then the row is the
+// only component of the chain
+
+// Returns the first node of the chain as the row. If the chain has length > 1,
+// then the column at which the token is found is also returned. Otherwise -1
+func StartCoordForChain (chain_id int, chains []int, g *graph.Graph) (int, int) {
+	row, col := -1, -1
+
+	// Chains must all start somewhere in the original start-rows
+	start_rows := StartingRows(chains)
+
+	// Search other rows in case it is there
+	for _, r := range start_rows {
+		if c, _ := ColumnForToken(chain_id, 0, r, g); c != -1 {
+			row = r
+			col = c
+			break
+		}
+	}
+
+	return row, col
 }
 
 // Returns the chain to which the given row belongs
@@ -153,9 +201,10 @@ func Disconnected (row int, g *graph.Graph) bool {
 	return true	
 }
 
-// Returns (column, *edge) at which a given edge is found for a row. Else (-1, nil)
-func ColumnForEdge (tag, num, row int, g *graph.Graph) (int, *Edge) {
-	var edge *Edge = nil
+// Returns (column, *Token) at which a given token is found along a row. Else (-1, nil)
+// If the num parameter is given as -1, then the first matching token with the tag is returned
+func ColumnForToken (tag, num, row int, g *graph.Graph) (int, *Token) {
+	var edge *Token = nil
 	var col int    = -1
 
 	for i := 0; i < g.Len(); i++ {
@@ -164,7 +213,7 @@ func ColumnForEdge (tag, num, row int, g *graph.Graph) (int, *Edge) {
 			continue
 		}
 		for _, e := range edges {
-			if e.Tag == tag && e.Num == num {
+			if e.Tag == tag && (e.Num == num || num == -1) {
 				edge = e
 				col = i
 				break
@@ -174,77 +223,101 @@ func ColumnForEdge (tag, num, row int, g *graph.Graph) (int, *Edge) {
 	return col, edge	
 }
 
-// Returns a sequence of visited nodes (rows) for a given chain
-func PathForChain (chain_id int, chains []int, g *graph.Graph) []int {
-	row, col := -1, -1
-	path     := []int{}
+// Repairs the tags of all paths in a graph (assuming no loops), and returns the path
+func RepairPathTags (chains []int, g *graph.Graph) (error, [][]int) {
+	paths := make([][]int, len(chains))
 
-	// Chains always start in start-rows. Obtain all starting rows
-	start_rows := StartingRows(chains)
-
-	// Chains with a single element may not merge. Return it as the path
-	if chains[chain_id] == 1 {
-		return []int{start_rows[chain_id]}
-	}
-
-	// Locate the starting row
-	for _, r := range start_rows {
-		if c, _ := ColumnForEdge(chain_id, 0, r, g); c != -1 {
-			row = r
-			col = c
-			break
+	// For each chain, construct the path (not expecting the numbers to be correct)
+	for chain_id := 0; chain_id < len(chains); chain_id++ {
+		// Locate the column at which the next token is found (only one)
+		row, col := StartCoordForChain(chain_id, chains, g)
+		for {
+			paths[chain_id] = append(paths[chain_id], row)
+			if col == -1 {
+				break
+			}
+			row = col
+			col, _ = ColumnForToken(chain_id, -1, row, g)
+			fmt.Printf("%d\n", col)
 		}
 	}
 
-	// Panic if the start row wasn't found
-	if col == -1 {
-		reason := fmt.Sprintf("Unable to find starting edge for chain %d", chain_id)
-		panic(errors.New(reason))
-	} else {
-		path = append(path, row)
+	// TODO: Technically tokens don't need a number. 
+	// Can be derived from path, given no loops
+
+	// For each path, update the sequence numbers
+	for chain_id := 0; chain_id < len(chains); chain_id++ {
+		for i := 0; i < len(paths[chain_id]) - 1; i++ {
+			row, col := paths[chain_id][i], paths[chain_id][i+1]
+			tokens := EdgesAt(row, col, g)
+			for _, t := range tokens {
+				if t.Tag == chain_id {
+					t.Num = i
+					break
+				}
+			}
+			g.Set(row, col, tokens)
+		}
 	}
+	return nil, paths
+}
 
-	// Visit the row of the column, repeat until no more edges found
-	for col != -1 {
+// Returns a sequence of visited nodes (rows) for a given chain
+func PathForChain (chain_id int, chains []int, g *graph.Graph) []int {
+	row, col, path := -1, -1, []int{}
 
-		// Next row to visit is that of the column
-		row = col
+	// Chains always start in start-rows. Obtain all starting rows
+	row, col = StartCoordForChain(chain_id, chains, g)
 
-		// Push to path
+	// Loop until end of chain is detected
+	for {
 		path = append(path, row)
-
-		// Find successor
-		col, _ = ColumnForEdge(chain_id, len(path) - 1, row, g)
+		if col == -1 {
+			break
+		} else {
+			row = col
+			col, _ = ColumnForToken(chain_id, len(path), row, g)
+		}
 	}
 
 	return path
 }
 
-// Adjusts edge identified by (tag,num) at (from, to) to (from, dest)
-func RewireTo (from, to, tag, num, dest int, g *graph.Graph) error {
-	var edge *Edge = nil
+// Returns true if the given path contains the given node
+func PathContains (path []int, x int) bool {
+	for _, y := range path {
+		if y == x {
+			return true
+		}
+	}
+	return false
+}
 
-	// Remove existing edge at position (from, to)
-	edges := EdgesAt(from, to, g)
-	for i, e := range edges {
-		if (e.Tag == tag) && (e.Num == num) {
-			edge = e
-			g.Set(from, to, append(edges[:i], edges[i+1:]...))
+// Rewires an edge to the given destination (assumes exists)
+func RewireTo (edge Edge, new_dest int, g *graph.Graph) error {
+	var found bool = false
+
+	// Remove existing edge at old position
+	tokens := EdgesAt(edge.Base, edge.Dest, g)
+	for i, t := range tokens {
+		if t.Equals(edge.Token) {
+			found = true
+			g.Set(edge.Base, edge.Dest, append(tokens[:i], tokens[i+1:]...))
 			break
 		}
 	}
 
 	// Verify edge was found and removed
-	if nil == edge {
-		reason := fmt.Sprintf("Edge ID(%d,%d) not found at (%d,%d)!",
-			tag, num, from, to)
+	if !found {
+		reason := fmt.Sprintf("Couldn't find edge (%d,%d) at (%d,%d)!",
+			edge.Token.Tag, edge.Token.Num, edge.Base, edge.Dest)
 		return errors.New(reason)
 	}
 
 	// Insert edge at destination column
-	edges = EdgesAt(from, dest, g)
-	edges = append(edges, edge)
-	return g.Set(from, dest, edges)
+	tokens = EdgesAt(edge.Base, new_dest, g)
+	tokens = append(tokens, edge.Token)
+	return g.Set(edge.Base, new_dest, tokens)
 }
 
 // Extends given NxN graph to (N+1)x(N+1) graph, and returns new length
@@ -267,7 +340,7 @@ func ExtendGraphByOne (g *graph.Graph) int {
 // Adds an edge to the given graph
 func Wire (from, to, tag, num int, color string, g *graph.Graph) error {
 	edges := EdgesAt(from, to, g)
-	edges = append(edges, &Edge{Tag: tag, Num: num, Color: color})
+	edges = append(edges, &Token{Tag: tag, Num: num, Color: color})
 	return g.Set(from, to, edges)
 }
 
@@ -310,6 +383,53 @@ func Merge (from, to int, g *graph.Graph) error {
 	return nil
 }
 
+// Places sync node between two edges. Returns nil on success
+func Sync (a, b Edge, g *graph.Graph) error {
+	var err error = nil
+
+	// Closure: Returns true if specific edge exists
+	existsEdge := func (x Edge) bool {
+		ys := EdgesAt(x.Base, x.Dest, g)
+		if len(ys) == 0 {
+			return false
+		}
+		for _, token := range ys {
+			if token.Equals(x.Token) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Return if edges do not exist
+	if !(existsEdge(a) && existsEdge(b)) {
+		return errors.New("Cannot sync non-existant edges!")
+	}
+
+	// Extend the graph by adding the sync node
+	sync_node_id := ExtendGraphByOne(g) - 1
+
+	// Rewire edges to point to sync node
+	if err = RewireTo(a, sync_node_id, g); nil != err {
+		return err
+	}
+	if err = RewireTo(b, sync_node_id, g); nil != err {
+		return errors.New("Unable to re-wire n")
+	}
+
+	// Add edges back from the sync nodes
+	if err = Wire(sync_node_id, a.Dest, a.Token.Tag, a.Token.Num + 1,
+		a.Token.Color, g); nil != err {
+		return errors.New("Unable to wire new edge: " + err.Error())
+	}
+	if err = Wire(sync_node_id, b.Dest, b.Token.Tag, b.Token.Num + 1, 
+		b.Token.Color, g); nil != err {
+		return errors.New("Unable to wire new edge: " + err.Error())
+	}
+
+	return err
+}
+
 // Returns a new graph sized for given chains. With chain edge colors
 func InitGraph (chains []int, chain_colors []string) *graph.Graph {
 
@@ -323,15 +443,15 @@ func InitGraph (chains []int, chain_colors []string) *graph.Graph {
 	for row := 0; row < n; row++ {
 		g[row] = make([]interface{}, n)
 		for col := 0; col < n; col++ {
-			g[row][col] = []*Edge{}
+			g[row][col] = []*Token{}
 		}
 	}
 
 	// Setup all chains
 	for i, offset := 0,0; i < len(chains); i++ {
 		for j := 0; j < (chains[i] - 1); j++ {
-			edge := Edge{Tag: i, Num: j, Color: chain_colors[i]}
-			g.Set(offset+j, offset+j+1, []*Edge{&edge})
+			edge := Token{Tag: i, Num: j, Color: chain_colors[i]}
+			g.Set(offset+j, offset+j+1, []*Token{&edge})
 		}
 		offset += chains[i]
 	}
