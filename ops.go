@@ -238,7 +238,6 @@ func RepairPathTags (chains []int, g *graph.Graph) (error, [][]int) {
 			}
 			row = col
 			col, _ = ColumnForToken(chain_id, -1, row, g)
-			fmt.Printf("%d\n", col)
 		}
 	}
 
@@ -291,6 +290,74 @@ func PathContains (path []int, x int) bool {
 		}
 	}
 	return false
+}
+
+// Collects all tokens along a column
+func TokensForColumn (col int, g *graph.Graph) []*Token {
+	tokens := []*Token{}
+
+	for row := 0; row < g.Len(); row++ {
+		tokens = append(tokens, EdgesAt(row, col, g)...)
+	}
+
+	return tokens
+}
+
+// Returns true if a cycle exists in a dependency list
+func IsCycle (offset, origin, visit_index int, visited []int, slices [][]int) bool {
+	slice := slices[visit_index - offset]
+
+	// Search cycle detection (don't visit twice)
+	for _, v := range visited {
+		if visit_index == v {
+			return false
+		}
+	}
+
+	// Search elements along the slice
+	for _, item := range slice {
+
+		// If the origin is discovered, then return true
+		if item == origin {
+			return true
+		}
+
+		// Otherwise search that visit index
+		if IsCycle(offset, origin, item, append(visited, visit_index), slices) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Searches back through a chain until the given condition is satisified
+// or no more options exist. 
+func Backtrace (tag, col int, cond func(int)bool, g *graph.Graph) []int {
+
+	// Visited list
+	visited := []int{}
+
+	// Search thw rows of the column for incoming edges
+	for row := 0; row < g.Len(); row++ {
+		tokens := EdgesAt(row, col, g)
+
+		// For each incoming line, take action if it belongs to the same tag
+		for _, t := range tokens {
+
+			if t.Tag == tag {
+				// If the condition is satisified, add the row. Otherwise, 
+				// recursively search farther
+				if cond(row) {
+					visited = append(visited, row)
+				} else {
+					visited = append(visited, Backtrace(tag, row, cond, g)...)
+				}
+			}
+		}
+	}
+
+	return visited
 }
 
 // Rewires an edge to the given destination (assumes exists)
