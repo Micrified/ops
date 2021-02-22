@@ -470,7 +470,9 @@ func Sync (a, b Edge, g *graph.Graph) error {
 
 	// Return if edges do not exist
 	if !(existsEdge(a) && existsEdge(b)) {
-		return errors.New("Cannot sync non-existant edges!")
+		reason := fmt.Sprintf("Edges (%d--[%d]-->%d), or (%d--[%d]-->%d) doesn't exist\n",
+			a.Base, a.Token.Tag, a.Dest, b.Base, b.Token.Tag, b.Dest)
+		return errors.New("Cannot sync non-existant edges: " + reason)
 	}
 
 	// Extend the graph by adding the sync node
@@ -524,4 +526,30 @@ func InitGraph (chains []int, chain_colors []string) *graph.Graph {
 	}
 
 	return &g
+}
+
+// Returns a deep clone of a graph
+func CloneGraph (g *graph.Graph) *graph.Graph {
+	var clone graph.Graph = make([][]interface{}, g.Len())
+
+	// Setup columns and rows
+	for row := 0; row < g.Len(); row++ {
+		clone[row] = make([]interface{}, g.Len())
+		for col := 0; col < g.Len(); col++ {
+			var copies []*Token = nil
+			if nil != (*g)[row][col] {
+				var items []*Token = ((*g)[row][col]).([]*Token)
+				copies = []*Token{}
+				for i := 0; i < len(items); i++ {
+					copies = append(copies, 
+						&Token{Tag: items[i].Tag, 
+					           Num: items[i].Num,
+					           Color: items[i].Color})
+				}
+			}
+			clone[row][col] = copies
+		}
+	}
+
+	return &clone
 }
