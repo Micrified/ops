@@ -142,6 +142,11 @@ func StartCoordForChain (chain_id int, chains []int, g *graph.Graph) (int, int) 
 	// Chains must all start somewhere in the original start-rows
 	start_rows := StartingRows(chains)
 
+	// Edge case: If the chain has length 1, it must begin at its starting row
+	if chains[chain_id] == 1 {
+		return start_rows[chain_id], col
+	}
+
 	// Search other rows in case it is there
 	for _, r := range start_rows {
 		if c, _ := ColumnForToken(chain_id, 0, r, g); c != -1 {
